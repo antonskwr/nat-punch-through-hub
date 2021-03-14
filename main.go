@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/antonskwr/nat-punch-through-hub/hub"
 )
@@ -10,15 +11,17 @@ import (
 func main() {
 	h := hub.NewHub()
 	port := getPort()
-	log.Printf("Starting hub on port%s ...\n", port)
-	log.Fatal(h.ListenAndServe(port))
+	log.Printf("Starting TCP hub on port :%d ...\n", port)
+	log.Fatal(h.ListenTCP(port))
 }
 
-func getPort() string {
+func getPort() int {
 	port := os.Getenv("PORT")
-	if len(port) == 0 {
-		port = "8080"
+	intPort, err := strconv.Atoi(port)
+
+	if err != nil {
+		intPort = 8080
 	}
 
-	return ":" + port
+	return intPort
 }

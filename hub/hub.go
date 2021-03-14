@@ -3,45 +3,56 @@ package hub
 import (
 	"fmt"
 	"log"
-	"net/http"
+	"net"
+	"sync"
+
+	"github.com/antonskwr/nat-punch-through-hub/util"
 )
 
 type Hub struct {
-	mux *http.ServeMux
+	listLock sync.RWMutex
+	gameServers map[uint32]string
 }
 
 func NewHub() *Hub {
 	h := &Hub{
-		mux: http.NewServeMux(),
+		gameServers: make(map[uint32]string),
 	}
-
-	h.setupRoutes()
 	return h
 }
 
-func (h *Hub) ListenAndServe(port string) error {
+func (h *Hub) ListenTCP(port int) error {
 	// TODO(antonskwr): change for secured TLS connection (ListenAndServeTLS)
-	return http.ListenAndServe(port, h.mux)
-}
 
-func (h *Hub) setupRoutes() {
-	h.Handle("/", http.NotFoundHandler())
-	h.Handle("/favicon.ico", http.NotFoundHandler())
+	tcpAddr := net.TCPAddr{}
+	tcpAddr.Port = port
 
-	h.Handle("/api/servers/list", h.handleListServers())
-	h.Handle("/api/servers/add", h.handleAddServer())
-	h.Handle("/api/servers/connect", h.handleConnectPeerToServer())
-}
+	tcpListener, err := net.ListenTCP("tcp", &tcpAddr)
 
-func (h *Hub) Handle(pattern string, handler http.Handler) {
-	h.mux.Handle(pattern, handler)
-}
-
-func handleErr(err error, message ...string) {
 	if err != nil {
-		if len(message) > 0 {
-			err = fmt.Errorf("[%s] -- %w --", message[0], err)
-		}
-		log.Fatal(err)
+		return err
 	}
+
+	hubAddr := tcpAddr.String()
+	log.Printf("Started TCP hub on %s\n", hubAddr)
+
+	for {
+		conn, connErr := tcpListener.AcceptTCP()
+
+		if connErr != nil {
+			util.HandleErr(connErr)
+			continue
+		}
+
+		sAddr := conn.LocalAddr().String()
+		rAddr := conn.RemoteAddr().String()
+
+		fmt.Printf("New connection:\nserver address: %s\nremote address: %s\n", sAddr, rAddr)
+		fmt.Println("===============")
+	}
+
+	// TODO(antonskwr): currently unreachable
+	tcpListener.Close()
+
+	return nil
 }
