@@ -11,8 +11,9 @@ import (
 func main() {
 	h := hub.NewHub()
 	port := getPort()
-	log.Printf("Starting TCP hub on port :%d ...\n", port)
-	log.Fatal(h.ListenTCP(port))
+	// log.Printf("Starting TCP hub on port :%d ...\n", port)
+	log.Printf("Starting UDP hub on port :%d ...\n", port)
+	log.Fatal(h.ListenUDP(port))
 }
 
 func getPort() int {

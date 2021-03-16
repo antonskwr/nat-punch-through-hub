@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,12 +15,12 @@ import (
 
 type Hub struct {
 	listLock sync.RWMutex
-	gameServers map[uint32]string
+	gameServers map[int]string
 }
 
 func NewHub() *Hub {
 	h := &Hub{
-		gameServers: make(map[uint32]string),
+		gameServers: make(map[int]string),
 	}
 	return h
 }
@@ -67,9 +67,6 @@ func (h *Hub) ListenTCP(port int) error {
 
 	defer tcpListener.Close()
 
-	hubAddr := tcpAddr.String()
-	log.Printf("Started TCP hub on %s\n", hubAddr)
-
 	for {
 		conn, connErr := tcpListener.AcceptTCP()
 
@@ -86,7 +83,74 @@ func (h *Hub) ListenTCP(port int) error {
 
 		go handleTCPConnection(conn)
 	}
+}
 
-	// TODO(antonskwr): currently unreachable
-	return nil
+func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) string {
+	resp := "Unknown msg"
+	splittedMsgs := strings.Split(msg, " ")
+
+	if len(splittedMsgs) == 1 {
+		if splittedMsgs[0] == "LIST" {
+			if len(h.gameServers) == 0 {
+				return "No hosts registered"
+			}
+			resp = "Listing hosts ...\n"
+			for id := range h.gameServers {
+				resp = fmt.Sprintf("%sHost[%d]\n", resp, id)
+			}
+		}
+	} else if len(splittedMsgs) == 2 {
+		id, err := strconv.Atoi(splittedMsgs[1])
+		if err == nil {
+			switch splittedMsgs[0] {
+			case "ADD":
+				h.listLock.Lock()
+				h.gameServers[id] = addr.String()
+				h.listLock.Unlock()
+				resp = "Host added successfully"
+			case "CONN":
+				// TODO(antonskwr): start NAT punch through
+			}
+		}
+	}
+
+	return resp
+}
+
+func (h *Hub) ListenUDP(port int) error {
+	udpAddr := net.UDPAddr{}
+	udpAddr.Port = port
+
+	conn, connErr := net.ListenUDP("udp", &udpAddr)
+	if connErr != nil {
+		return connErr
+	}
+
+	defer conn.Close()
+
+	msgBuffer := make([]byte, 7)
+
+	for {
+		n, addr, err := conn.ReadFromUDP(msgBuffer)
+		trimmedMsg := strings.TrimSpace(string(msgBuffer[0:n]))
+		fmt.Printf("%s -> %s\n", addr.String(), trimmedMsg)
+
+		if trimmedMsg == "STOP" {
+			fmt.Println("Exiting UDP server!")
+			return nil
+		}
+
+		if err != nil {
+			util.HandleErr(err)
+			continue
+		}
+
+		resp := h.HandleMsgUDP(trimmedMsg, addr)
+		_, err = conn.WriteToUDP([]byte(resp), addr) // TODO(antonskwr): handle the number of bytes
+
+		if err != nil {
+			util.HandleErr(err)
+			continue
+		}
+	}
 }
