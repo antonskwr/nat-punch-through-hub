@@ -14,13 +14,13 @@ import (
 )
 
 type Hub struct {
-	listLock sync.RWMutex
-	gameServers map[int]string
+	listLock    sync.RWMutex
+	gameServers map[int]GameServer
 }
 
 func NewHub() *Hub {
 	h := &Hub{
-		gameServers: make(map[int]string),
+		gameServers: make(map[int]GameServer),
 	}
 	return h
 }
@@ -85,14 +85,18 @@ func (h *Hub) ListenTCP(port int) error {
 	}
 }
 
-func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) string {
+type GameServer struct {
+	addr *net.UDPAddr
+}
+
+func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) (string, *net.UDPAddr, string) {
 	resp := "Unknown msg"
 	splittedMsgs := strings.Split(msg, " ")
 
 	if len(splittedMsgs) == 1 {
 		if splittedMsgs[0] == "LIST" {
 			if len(h.gameServers) == 0 {
-				return "No hosts registered"
+				return "No hosts registered", nil, ""
 			}
 			resp = "Listing hosts ...\n"
 			for id := range h.gameServers {
@@ -105,16 +109,27 @@ func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) string {
 			switch splittedMsgs[0] {
 			case "ADD":
 				h.listLock.Lock()
-				h.gameServers[id] = addr.String()
+				h.gameServers[id] = GameServer{addr}
 				h.listLock.Unlock()
 				resp = "Host added successfully"
 			case "CONN":
+				gameServer, ok := h.gameServers[id]
+				if !ok {
+					resp = "No matching ids"
+				} else {
+					if gameServer.addr.String() != addr.String() {
+						resp = "OK " + gameServer.addr.String()
+						return resp, gameServer.addr, "REQ " + addr.String()
+					} else {
+						resp = "can't connect"
+					}
+				}
 				// TODO(antonskwr): start NAT punch through
 			}
 		}
 	}
 
-	return resp
+	return resp, nil, ""
 }
 
 func (h *Hub) ListenUDP(port int) error {
@@ -145,12 +160,21 @@ func (h *Hub) ListenUDP(port int) error {
 			continue
 		}
 
-		resp := h.HandleMsgUDP(trimmedMsg, addr)
+		resp, rAddr, req := h.HandleMsgUDP(trimmedMsg, addr)
 		_, err = conn.WriteToUDP([]byte(resp), addr) // TODO(antonskwr): handle the number of bytes
 
 		if err != nil {
 			util.HandleErr(err)
 			continue
+		}
+
+		if rAddr != nil && len(req) > 4 {
+			_, err = conn.WriteToUDP([]byte(req), rAddr) // TODO(antonskwr): handle the number of bytes
+
+			if err != nil {
+				util.HandleErr(err)
+				continue
+			}
 		}
 	}
 }
