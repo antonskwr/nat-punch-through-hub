@@ -109,11 +109,13 @@ func (h *Hub) ListenUDP(port int) error {
 
 		if rAddr != nil && len(req) > 4 {
 			_, err = conn.WriteToUDP([]byte(req), rAddr) // TODO(antonskwr): handle the number of bytes
-
+			fmt.Println("Sent a request to host")
 			if err != nil {
 				util.HandleErrNonFatal(err)
 				continue
 			}
+		} else {
+			fmt.Printf("request addr is nil:%v, req len %v\n", rAddr == nil, len(req))
 		}
 	}
 }
