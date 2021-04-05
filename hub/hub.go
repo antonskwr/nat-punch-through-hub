@@ -10,6 +10,30 @@ import (
 	"github.com/antonskwr/nat-punch-through-hub/util"
 )
 
+type RespType int
+
+const (
+	RespTypeNone RespType = iota
+	RespTypeRegular
+	RespTypePeerReq
+)
+
+type Resp struct {
+	rType      RespType
+	msg        string
+	peerAddr   *net.UDPAddr
+	peerReqMsg string
+}
+
+func ResponseNone() Resp {
+	return Resp{
+		RespTypeNone,
+		"",
+		nil,
+		"",
+	}
+}
+
 type Hub struct {
 	listLock    sync.RWMutex
 	gameServers map[int]GameServer
@@ -26,21 +50,27 @@ type GameServer struct {
 	addr *net.UDPAddr
 }
 
-func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) (string, *net.UDPAddr, string) {
-	resp := ""
+func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) Resp {
+	resp := ResponseNone()
 	splittedMsgs := strings.Split(msg, " ")
 
-	if len(splittedMsgs) == 1 {
-		if splittedMsgs[0] == "LIST" {
+	switch true {
+	case len(splittedMsgs) == 1:
+		switch splittedMsgs[0] {
+		case "HB":
+			return resp
+		case "LIST":
+			resp.rType = RespTypeRegular
 			if len(h.gameServers) == 0 {
-				return "No hosts registered", nil, ""
+				resp.msg = "No hosts registered"
+				return resp // TODO(antonskwr): dirty code
 			}
-			resp = "Listing hosts ...\n"
+			resp.msg = "Listing hosts ...\n"
 			for id := range h.gameServers {
-				resp = fmt.Sprintf("%sHost[%d]\n", resp, id)
+				resp.msg = fmt.Sprintf("%sHost[%d]\n", resp.msg, id)
 			}
 		}
-	} else if len(splittedMsgs) == 2 {
+	case len(splittedMsgs) == 2:
 		id, err := strconv.Atoi(splittedMsgs[1])
 		if err == nil {
 			switch splittedMsgs[0] {
@@ -48,25 +78,28 @@ func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) (string, *net.UDPAddr,
 				h.listLock.Lock()
 				h.gameServers[id] = GameServer{addr}
 				h.listLock.Unlock()
-				resp = "Host added successfully"
+				resp.rType = RespTypeRegular
+				resp.msg = "Host added successfully"
 			case "JOIN":
 				gameServer, ok := h.gameServers[id]
 				if !ok {
-					resp = "No matching ids"
+					resp.rType = RespTypeRegular
+					resp.msg = "No matching ids"
 				} else {
 					if gameServer.addr.String() != addr.String() {
-						resp = "OK " + gameServer.addr.String()
-						return resp, gameServer.addr, "REQ " + addr.String()
+						resp.rType = RespTypePeerReq
+						resp.msg = "OK " + gameServer.addr.String()
+						resp.peerAddr = gameServer.addr
+						resp.peerReqMsg = "REQ " + addr.String()
 					} else {
-						resp = "can't connect"
+						resp.rType = RespTypeRegular
+						resp.msg = "can't connect"
 					}
 				}
-				// TODO(antonskwr): start NAT punch through
 			}
 		}
 	}
-
-	return resp, nil, ""
+	return resp
 }
 
 func (h *Hub) ListenUDP(port int) error {
@@ -92,33 +125,38 @@ func (h *Hub) ListenUDP(port int) error {
 		}
 
 		trimmedMsg := strings.TrimSpace(string(msgBuffer[0:n]))
-		fmt.Printf("%s -> %s\n", addr.String(), trimmedMsg)
 
 		if err != nil {
 			util.HandleErrNonFatal(err)
 			continue
 		}
 
-		resp, rAddr, req := h.HandleMsgUDP(trimmedMsg, addr)
+		resp := h.HandleMsgUDP(trimmedMsg, addr)
 
-		if len(resp) != 0 {
-			_, err = conn.WriteToUDP([]byte(resp), addr) // TODO(antonskwr): handle the number of bytes
-		}
-
-		if err != nil {
-			util.HandleErrNonFatal(err)
-			continue
-		}
-
-		if rAddr != nil && len(req) > 4 {
-			_, err = conn.WriteToUDP([]byte(req), rAddr) // TODO(antonskwr): handle the number of bytes
-			fmt.Println("Sent a request to host")
+		if resp.rType != RespTypeNone {
+			fmt.Printf("%s -> %s\n", addr.String(), trimmedMsg)
+			_, err = conn.WriteToUDP([]byte(resp.msg), addr) // TODO(antonskwr): handle the number of bytes
 			if err != nil {
 				util.HandleErrNonFatal(err)
 				continue
 			}
-		} else {
-			fmt.Printf("request addr is nil:%v, req len %v\n", rAddr == nil, len(req))
+
+			switch resp.rType {
+			case RespTypeRegular:
+			case RespTypePeerReq:
+				pAddr := resp.peerAddr
+				pReqMsg := resp.peerReqMsg
+				if pAddr != nil && len(pReqMsg) > 4 {
+					_, err = conn.WriteToUDP([]byte(pReqMsg), pAddr) // TODO(antonskwr): handle the number of bytes
+					fmt.Println("Sent a request to host")
+					if err != nil {
+						util.HandleErrNonFatal(err)
+						continue
+					}
+				} else {
+					fmt.Printf("request addr is nil:%v, req len %v\n", pAddr == nil, len(pReqMsg))
+				}
+			}
 		}
 	}
 }
