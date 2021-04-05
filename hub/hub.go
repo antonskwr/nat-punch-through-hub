@@ -27,7 +27,7 @@ type GameServer struct {
 }
 
 func (h *Hub) HandleMsgUDP(msg string, addr *net.UDPAddr) (string, *net.UDPAddr, string) {
-	resp := "Unknown msg"
+	resp := ""
 	splittedMsgs := strings.Split(msg, " ")
 
 	if len(splittedMsgs) == 1 {
@@ -100,7 +100,10 @@ func (h *Hub) ListenUDP(port int) error {
 		}
 
 		resp, rAddr, req := h.HandleMsgUDP(trimmedMsg, addr)
-		_, err = conn.WriteToUDP([]byte(resp), addr) // TODO(antonskwr): handle the number of bytes
+
+		if len(resp) != 0 {
+			_, err = conn.WriteToUDP([]byte(resp), addr) // TODO(antonskwr): handle the number of bytes
+		}
 
 		if err != nil {
 			util.HandleErrNonFatal(err)
